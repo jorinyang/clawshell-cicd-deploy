@@ -1,0 +1,29 @@
+{
+  "aliyun": {
+    "access_key_id": "",
+    "access_key_secret": "",
+    "region": "ap-southeastheast-1",
+    "domain": "",
+    "oss_bucket": "",
+    "ssl_cert": ""
+  },
+  "supabase": {
+    "url": "",
+    "anon_key": "",
+    "service_role_key": ""
+  },
+  "github": {
+    "token": "",
+    "owner": "",
+    "repo_prefix": "cicd-"
+  },
+  "deploy": {
+    "frontend": {
+      "build_command": "npm run build",
+      "output_dir": "dist"
+    },
+    "backend": {
+      "runtime": "nodejs18"
+    }
+  }
+}

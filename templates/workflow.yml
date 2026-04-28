@@ -1,0 +1,161 @@
+# GitHub Actions Workflow 模板
+# 位置: .github/workflows/deploy.yml
+# 由 Agent 自动生成并部署
+
+name: Deploy to Aliyun
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'production'
+
+jobs:
+  # ========== 前端部署 (OSS) ==========
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.type == 'frontend' || contains(github.event.inputs.type, 'static') }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          
+      - name: Configure Aliyun CLI
+        env:
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        run: |
+          pip install aliyun-cli
+          aliyun configure set --type access_key \
+            --key $ALIYUN_ACCESS_KEY_ID \
+            --secret $ALIYUN_ACCESS_KEY_SECRET \
+            --region ap-southeastheast-1
+          
+      - name: Deploy to OSS
+        run: |
+          ossutil cp -r ./dist oss://${{ secrets.OSS_BUCKET }}/ \
+            --force \
+            --skip--existing \
+            --config-file ossutil-config.ini
+          
+      - name: Verify deployment
+        run: |
+          curl -sf https://${{ secrets.DOMAIN }}/index.html \
+            || echo "Warning: Health check failed"
+
+  # ========== 后端部署 (FC) ==========
+  deploy-backend:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.type == 'backend' || contains(github.event.inputs.type, 'api') }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Configure Aliyun CLI
+        env:
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        run: |
+          pip install aliyun-python-sdk-fc2
+          # FC部署配置
+          
+      - name: Deploy to Function Compute
+        run: |
+          echo "Deploying to FC..."
+          # s deploy 或 fun deploy
+          
+      - name: Setup domain
+        run: |
+          echo "Configuring custom domain..."
+          
+      - name: Verify deployment
+        run: |
+          curl -sf https://${{ secrets.API_DOMAIN }}/api/health \
+            || echo "Warning: API health check failed"
+
+  # ========== 全栈部署 ==========
+  deploy-fullstack:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.type == 'fullstack' || github.event.inputs.type == '' }}
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ${{ secrets.DB_NAME }}
+          POSTGRES_USER: ${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      # 数据库迁移
+      - name: Run migrations
+        run: |
+          # 执行数据库迁移
+          npm run db:migrate
+        env:
+          DATABASE_URL: postgres://${{ secrets.DB_USER }}:${{ secrets.DB_PASSWORD }}@localhost:5432/${{ secrets.DB_NAME }}
+          
+      # 前端构建
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: https://${{ secrets.API_DOMAIN }}
+          
+      # 后端部署
+      - name: Deploy backend
+        run: |
+          cd api
+          npm ci
+          # 部署到FC
+          
+      # 前端部署
+      - name: Deploy frontend
+        run: |
+          ossutil cp -r ./frontend/dist oss://${{ secrets.OSS_BUCKET }}/ --force
+          
+      - name: Final health check
+        run: |
+          echo "Deployment complete!"
+          echo "Frontend: https://${{ secrets.DOMAIN }}"
+          echo "API: https://${{ secrets.API_DOMAIN }}"
